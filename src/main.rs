@@ -1,14 +1,17 @@
+#![feature(result_flattening)]
+
 use bstr::ByteSlice;
 use std::cmp::Ordering;
 use std::error::Error;
 use std::io::Read;
 
-#[derive(PartialEq, Debug)]
+#[derive(Debug)]
 enum ParseErr {
     NoValidFieldLeft,
     NoHeaderMatch,
     Utf8Error(bstr::Utf8Error),
     InvalidNum(std::num::ParseIntError),
+    InvByte(Box<dyn Error>),
 }
 
 struct PGM {
@@ -81,7 +84,22 @@ fn get_num(input: ParseInput) -> ParseResult<i32> {
 }
 
 fn get_bits(input: ParseInput, amount: i32) -> ParseResult<Vec<bool>> {
-    unimplemented!()
+    let amount_in_bytes = amount / 8;
+
+    let parsed = <ParseInput as std::io::Read>::bytes(input).take(amount_in_bytes as usize)
+        .map(|byte_res| {
+            byte_res.map(|byte| {
+                let mut res: Vec<bool> = vec![];
+                for i in 0..8 {
+                    res.push((byte & 2u8.pow(7 - (i as u32))) != 0);
+                }
+                res
+            })
+        })
+        .fold(Ok(vec![]), |s_res, e| s_res.map(|mut s| e.map(|mut e| { s.append(&mut e); s })).flatten())
+        .or_else(|er| Err((ParseErr::InvByte(Box::new(er)), input)))?;
+
+    Ok((parsed, unimplemented!()))
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -106,7 +124,7 @@ mod tests {
             "P5
             120 32"
         )
-        .as_bytes();
+            .as_bytes();
 
         assert_eq!(
             match match_header_version(mock_header) {
