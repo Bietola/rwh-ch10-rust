@@ -1,7 +1,7 @@
 use bstr::ByteSlice;
+use std::cmp::Ordering;
 use std::error::Error;
 use std::io::Read;
-use std::cmp::Ordering;
 
 #[derive(PartialEq, Debug)]
 enum ParseErr {
@@ -30,13 +30,13 @@ fn parse_pgm(input: ParseInput) -> ParseResult<PGM> {
     let (contents, rest) = get_bits(rest, width * height)?;
 
     Ok((
-            PGM {
-                width: width as usize,
-                height: height as usize,
-                max_grey_val: max_grey_val as u8,
-                contents,
-            },
-            rest,
+        PGM {
+            width: width as usize,
+            height: height as usize,
+            max_grey_val: max_grey_val as u8,
+            contents,
+        },
+        rest,
     ))
 }
 
@@ -54,18 +54,18 @@ fn match_header_version(input: ParseInput) -> ParseResult<()> {
 }
 
 fn get_num(input: ParseInput) -> ParseResult<i32> {
-    let raw_num_str = match input.fields().next() {
-        Some(s) => s,
-        None => return Err((ParseErr::NoValidFieldLeft, input)),
-    };
+    let raw_num_str = input
+        .fields()
+        .next()
+        .ok_or_else(|| (ParseErr::NoValidFieldLeft, input))?;
 
-    let num = match raw_num_str.to_str() {
-        Ok(s) => match s.parse::<i32>() {
-            Ok(s) => s,
-            Err(er) => return Err((ParseErr::InvalidNum(er), input)),
+    let num = raw_num_str.to_str().map_or_else(
+        |er| Err((ParseErr::Utf8Error(er), input)),
+        |s| {
+            s.parse::<i32>()
+                .or_else(|er| Err((ParseErr::InvalidNum(er), input)))
         },
-        Err(er) => return Err((ParseErr::Utf8Error(er), input)),
-    };
+    )?;
 
     // `parsed_len` is length to consume after parse. The comparison is for "end of string" edge
     // case.
@@ -102,9 +102,11 @@ mod tests {
 
     #[test]
     fn match_header_version_obv() {
-        let mock_header: &[u8] = indoc!("P5
-            120 32")
-            .as_bytes();
+        let mock_header: &[u8] = indoc!(
+            "P5
+            120 32"
+        )
+        .as_bytes();
 
         assert_eq!(
             match match_header_version(mock_header) {
