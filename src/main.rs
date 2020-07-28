@@ -1,11 +1,11 @@
 #![feature(result_flattening)]
 
 use bstr::ByteSlice;
+use newtype::NewType;
 use std::cmp::Ordering;
 use std::error::Error;
-use std::io::Read;
 use std::fmt;
-use newtype::NewType;
+use std::io::Read;
 
 #[derive(Debug)]
 enum ParseErr {
@@ -29,7 +29,7 @@ struct Contents(Vec<u8>);
 
 impl fmt::Debug for Contents {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "contents")
+        write!(f, "<contents>")
     }
 }
 
@@ -37,12 +37,21 @@ type ParseInput<'a> = &'a [u8];
 type ParseResult<'a, T> = Result<(T, ParseInput<'a>), (ParseErr, ParseInput<'a>)>;
 
 fn parse_pgm(input: ParseInput) -> ParseResult<PGM> {
-    let (_, rest) = match_header_version(input)?;
+    parse! {
+        input: input;
+        rest: rest;
 
-    let (width, rest) = get_num(rest)?;
-    let (height, rest) = get_num(rest)?;
-    let (max_grey_val, rest) = get_num(rest)?;
-    let (contents, rest) = get_bytes(rest, (width * height) as usize)?;
+        match_header_version;
+        let width <- get_num;
+        let height <- get_num;
+        let max_grey_val <- get_num;
+        let contents <- get_bytes((width * height) as usize);
+    };
+
+    // let (width, rest) = get_num(rest)?;
+    // let (height, rest) = get_num(rest)?;
+    // let (max_grey_val, rest) = get_num(rest)?;
+    // let (contents, rest) = get_bytes(rest, (width * height) as usize)?;
 
     Ok((
         PGM {
