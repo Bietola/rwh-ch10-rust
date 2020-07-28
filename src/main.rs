@@ -86,6 +86,7 @@ fn get_num(input: ParseInput) -> ParseResult<i32> {
 fn get_bits(input: ParseInput, amount: i32) -> ParseResult<Vec<bool>> {
     let amount_in_bytes = amount / 8;
 
+    // Parse byte per byte
     let parsed = <ParseInput as std::io::Read>::bytes(input).take(amount_in_bytes as usize)
         .map(|byte_res| {
             byte_res.map(|byte| {
