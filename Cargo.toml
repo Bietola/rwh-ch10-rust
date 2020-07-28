@@ -10,3 +10,4 @@ edition = "2018"
 
 bstr = "0.2.13"
 indoc = "0.3.6"
+newtype = "0.2.1"

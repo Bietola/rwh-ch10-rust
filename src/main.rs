@@ -4,6 +4,8 @@ use bstr::ByteSlice;
 use std::cmp::Ordering;
 use std::error::Error;
 use std::io::Read;
+use std::fmt;
+use newtype::NewType;
 
 #[derive(Debug)]
 enum ParseErr {
@@ -14,11 +16,21 @@ enum ParseErr {
     InvByte(Box<dyn Error>),
 }
 
+#[derive(Debug)]
 struct PGM {
     width: usize,
     height: usize,
     max_grey_val: u8,
-    contents: Vec<bool>,
+    contents: Contents,
+}
+
+#[derive(NewType)]
+struct Contents(Vec<u8>);
+
+impl fmt::Debug for Contents {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "contents")
+    }
 }
 
 type ParseInput<'a> = &'a [u8];
@@ -30,14 +42,14 @@ fn parse_pgm(input: ParseInput) -> ParseResult<PGM> {
     let (width, rest) = get_num(rest)?;
     let (height, rest) = get_num(rest)?;
     let (max_grey_val, rest) = get_num(rest)?;
-    let (contents, rest) = get_bits(rest, width * height)?;
+    let (contents, rest) = get_bytes(rest, (width * height) as usize)?;
 
     Ok((
         PGM {
             width: width as usize,
             height: height as usize,
             max_grey_val: max_grey_val as u8,
-            contents,
+            contents: contents.into(),
         },
         rest,
     ))
@@ -83,24 +95,21 @@ fn get_num(input: ParseInput) -> ParseResult<i32> {
     Ok((num, &input[parsed_len..]))
 }
 
-fn get_bits(input: ParseInput, amount: i32) -> ParseResult<Vec<bool>> {
-    let amount_in_bytes = amount / 8;
-
-    // Parse byte per byte
-    let parsed = <ParseInput as std::io::Read>::bytes(input).take(amount_in_bytes as usize)
-        .map(|byte_res| {
-            byte_res.map(|byte| {
-                let mut res: Vec<bool> = vec![];
-                for i in 0..8 {
-                    res.push((byte & 2u8.pow(7 - (i as u32))) != 0);
-                }
-                res
+fn get_bytes(input: ParseInput, amount: usize) -> ParseResult<Vec<u8>> {
+    let parsed = <ParseInput as std::io::Read>::bytes(input)
+        .take(amount)
+        .fold(Ok(vec![]), |s, e| {
+            s.map(|mut s| {
+                e.map(|e| {
+                    s.push(e);
+                    s
+                })
             })
+            .flatten()
         })
-        .fold(Ok(vec![]), |s_res, e| s_res.map(|mut s| e.map(|mut e| { s.append(&mut e); s })).flatten())
         .or_else(|er| Err((ParseErr::InvByte(Box::new(er)), input)))?;
 
-    Ok((parsed, unimplemented!()))
+    Ok((parsed, &input[amount..]))
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -109,7 +118,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut contents = vec![];
     file.read_to_end(&mut contents)?;
 
-    let pgm = parse_pgm(bstr::BString::from(contents).as_slice());
+    let contents = bstr::BString::from(contents);
+    let pgm = parse_pgm(contents.as_slice());
+
+    println!("{:?}", pgm);
 
     Ok(())
 }
@@ -125,7 +137,7 @@ mod tests {
             "P5
             120 32"
         )
-            .as_bytes();
+        .as_bytes();
 
         assert_eq!(
             match match_header_version(mock_header) {
