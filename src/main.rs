@@ -7,13 +7,49 @@ use std::error::Error;
 use std::fmt;
 use std::io::Read;
 
-#[derive(Debug)]
+trait Parser<'a, Out> {
+    fn parse(&self, input: ParseInput<'a>) -> ParseResult<'a, Out>;
+}
+
+impl<'a, Out, F> Parser<'a, Out> for F
+where
+    F: Fn(ParseInput<'a>) -> ParseResult<Out>,
+{
+    fn parse(&self, input: ParseInput<'a>) -> ParseResult<'a, Out> {
+        self(input)
+    }
+}
+
+fn map<'a, Out, Out1, F, P>(parser: P, fun: F) -> impl Parser<'a, Out1>
+where
+    F: Fn(Out) -> Out1,
+    P: Parser<'a, Out>,
+{
+    move |input| {
+        parser.parse(input).map(|(out, rest)| (fun(out), rest))
+    }
+}
+
+fn and_then<'a, Out, Out1, F, P, P1>(parser: P, fun: F) -> impl Parser<'a, Out1>
+where
+    F: Fn(Out) -> P1,
+    P: Parser<'a, Out>,
+    P1: Parser<'a, Out1>,
+{
+    move |input| {
+        parser
+            .parse(input)
+            .and_then(|(out, rest)| fun(out).parse(rest))
+    }
+}
+
+#[derive(Debug, PartialEq)]
 enum ParseErr {
     NoValidFieldLeft,
     NoHeaderMatch,
     Utf8Error(bstr::Utf8Error),
     InvalidNum(std::num::ParseIntError),
-    InvByte(Box<dyn Error>),
+    InvByte(String), // Ugly hack to permit derivation of `PartialEq`
 }
 
 #[derive(Debug)]
@@ -37,21 +73,11 @@ type ParseInput<'a> = &'a [u8];
 type ParseResult<'a, T> = Result<(T, ParseInput<'a>), (ParseErr, ParseInput<'a>)>;
 
 fn parse_pgm(input: ParseInput) -> ParseResult<PGM> {
-    parse! {
-        input: input;
-        rest: rest;
-
-        match_header_version;
-        let width <- get_num;
-        let height <- get_num;
-        let max_grey_val <- get_num;
-        let contents <- get_bytes((width * height) as usize);
-    };
-
-    // let (width, rest) = get_num(rest)?;
-    // let (height, rest) = get_num(rest)?;
-    // let (max_grey_val, rest) = get_num(rest)?;
-    // let (contents, rest) = get_bytes(rest, (width * height) as usize)?;
+    let (_, rest) = match_header_version(input)?;
+    let (width, rest) = get_num(rest)?;
+    let (height, rest) = get_num(rest)?;
+    let (max_grey_val, rest) = get_num(rest)?;
+    let (contents, rest) = get_bytes(rest, (width * height) as usize)?;
 
     Ok((
         PGM {
@@ -116,7 +142,7 @@ fn get_bytes(input: ParseInput, amount: usize) -> ParseResult<Vec<u8>> {
             })
             .flatten()
         })
-        .or_else(|er| Err((ParseErr::InvByte(Box::new(er)), input)))?;
+        .or_else(|er| Err((ParseErr::InvByte(er.to_string()), input)))?;
 
     Ok((parsed, &input[amount..]))
 }
@@ -165,5 +191,35 @@ mod tests {
     #[test]
     fn get_num_multiple() {
         assert_eq!(get_num("12 24".as_bytes()), Ok((12, "24".as_bytes())));
+    }
+
+    #[test]
+    fn and_then_map_2_nums() {
+        let input = b"12 14 16";
+
+        // let res = and_then(match_header_version, |_| {
+        //     and_then(get_num, |width| {
+        //         and_then(get_num, |height| {
+        //             and_then(get_num, |max_grey_val| {
+        //                 map(
+        //                     |input| get_bytes(input, (width * height) as usize),
+        //                     |contents| PGM {
+        //                         width: width as usize,
+        //                         height: height as usize,
+        //                         max_grey_val: max_grey_val as u8,
+        //                         contents: contents.into(),
+        //                     },
+        //                 )
+        //             })
+        //         })
+        //     })
+        // }).parse(input);
+
+        let res = and_then(get_num, move |n1| map(get_num, move |n2| (n1, n2))).parse(input);
+
+        assert_eq!(
+            res,
+            Ok(((12, 14), "16".as_bytes())),
+        );
     }
 }
