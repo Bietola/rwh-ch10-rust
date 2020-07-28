@@ -25,9 +25,7 @@ where
     F: Fn(Out) -> Out1,
     P: Parser<'a, Out>,
 {
-    move |input| {
-        parser.parse(input).map(|(out, rest)| (fun(out), rest))
-    }
+    move |input| parser.parse(input).map(|(out, rest)| (fun(out), rest))
 }
 
 fn and_then<'a, Out, Out1, F, P, P1>(parser: P, fun: F) -> impl Parser<'a, Out1>
@@ -65,7 +63,7 @@ struct Contents(Vec<u8>);
 
 impl fmt::Debug for Contents {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "<contents>")
+        write!(f, "{:?}...<contents>", &self.0[0..20].as_bstr())
     }
 }
 
@@ -73,21 +71,24 @@ type ParseInput<'a> = &'a [u8];
 type ParseResult<'a, T> = Result<(T, ParseInput<'a>), (ParseErr, ParseInput<'a>)>;
 
 fn parse_pgm(input: ParseInput) -> ParseResult<PGM> {
-    let (_, rest) = match_header_version(input)?;
-    let (width, rest) = get_num(rest)?;
-    let (height, rest) = get_num(rest)?;
-    let (max_grey_val, rest) = get_num(rest)?;
-    let (contents, rest) = get_bytes(rest, (width * height) as usize)?;
-
-    Ok((
-        PGM {
-            width: width as usize,
-            height: height as usize,
-            max_grey_val: max_grey_val as u8,
-            contents: contents.into(),
-        },
-        rest,
-    ))
+    and_then(match_header_version, |_| {
+        and_then(get_num, move |width| {
+            and_then(get_num, move |height| {
+                and_then(get_num, move |max_grey_val| {
+                    map(
+                        move |input| get_bytes(input, (width * height) as usize),
+                        move |contents| PGM {
+                            width: width as usize,
+                            height: height as usize,
+                            max_grey_val: max_grey_val as u8,
+                            contents: contents.into(),
+                        },
+                    )
+                })
+            })
+        })
+    })
+    .parse(input)
 }
 
 fn match_header_version(input: ParseInput) -> ParseResult<()> {
@@ -197,29 +198,8 @@ mod tests {
     fn and_then_map_2_nums() {
         let input = b"12 14 16";
 
-        // let res = and_then(match_header_version, |_| {
-        //     and_then(get_num, |width| {
-        //         and_then(get_num, |height| {
-        //             and_then(get_num, |max_grey_val| {
-        //                 map(
-        //                     |input| get_bytes(input, (width * height) as usize),
-        //                     |contents| PGM {
-        //                         width: width as usize,
-        //                         height: height as usize,
-        //                         max_grey_val: max_grey_val as u8,
-        //                         contents: contents.into(),
-        //                     },
-        //                 )
-        //             })
-        //         })
-        //     })
-        // }).parse(input);
-
         let res = and_then(get_num, move |n1| map(get_num, move |n2| (n1, n2))).parse(input);
 
-        assert_eq!(
-            res,
-            Ok(((12, 14), "16".as_bytes())),
-        );
+        assert_eq!(res, Ok(((12, 14), "16".as_bytes())),);
     }
 }
