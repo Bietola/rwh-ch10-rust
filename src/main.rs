@@ -1,4 +1,5 @@
 #![feature(result_flattening)]
+#![feature(trace_macros)]
 
 use bstr::ByteSlice;
 use newtype::NewType;
@@ -6,6 +7,10 @@ use std::cmp::Ordering;
 use std::error::Error;
 use std::fmt;
 use std::io::Read;
+
+/********************************************/
+/* Parser general definition and properties */
+/********************************************/
 
 trait Parser<'a, Out> {
     fn parse(&self, input: ParseInput<'a>) -> ParseResult<'a, Out>;
@@ -50,6 +55,22 @@ enum ParseErr {
     InvByte(String), // Ugly hack to permit derivation of `PartialEq`
 }
 
+macro_rules! parse_do {
+    (return $val:expr,) => {
+        move |input| Ok(($val, input))
+    };
+    ($out:tt <- $parser:expr, $($tail:tt)*) => {
+        and_then($parser, move |$out| parse_do!($($tail)*))
+    };
+    ($parser:tt, $($tail:tt)*) => {
+        and_then($parser, move |_| parse_do!($($tail)*))
+    };
+}
+
+/****************/
+/* PGM Datatype */
+/****************/
+
 #[derive(Debug)]
 struct PGM {
     width: usize,
@@ -70,25 +91,27 @@ impl fmt::Debug for Contents {
 type ParseInput<'a> = &'a [u8];
 type ParseResult<'a, T> = Result<(T, ParseInput<'a>), (ParseErr, ParseInput<'a>)>;
 
+/*******************/
+/* Parser builders */
+/*******************/
+
 fn parse_pgm(input: ParseInput) -> ParseResult<PGM> {
-    and_then(match_header_version, |_| {
-        and_then(get_num, move |width| {
-            and_then(get_num, move |height| {
-                and_then(get_num, move |max_grey_val| {
-                    map(
-                        move |input| get_bytes(input, (width * height) as usize),
-                        move |contents| PGM {
-                            width: width as usize,
-                            height: height as usize,
-                            max_grey_val: max_grey_val as u8,
-                            contents: contents.into(),
-                        },
-                    )
-                })
-            })
-        })
-    })
-    .parse(input)
+    let parser = parse_do! {
+        match_header_version,
+        width <- get_num,
+        height <- get_num,
+        max_grey_val <- get_num,
+        contents <- move |i| get_bytes(i, (width * height) as usize),
+
+        return PGM {
+            width: width as usize,
+            height: height as usize,
+            max_grey_val: max_grey_val as u8,
+            contents: contents.into(),
+        },
+    };
+
+    parser.parse(input)
 }
 
 fn match_header_version(input: ParseInput) -> ParseResult<()> {
@@ -143,10 +166,14 @@ fn get_bytes(input: ParseInput, amount: usize) -> ParseResult<Vec<u8>> {
             })
             .flatten()
         })
-        .or_else(|er| Err((ParseErr::InvByte(er.to_string()), input)))?;
+    .or_else(|er| Err((ParseErr::InvByte(er.to_string()), input)))?;
 
     Ok((parsed, &input[amount..]))
 }
+
+/********/
+/* Main */
+/********/
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut file = std::fs::File::open("assets/lolcat.pgm")?;
@@ -162,6 +189,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/*********/
+/* Tests */
+/*********/
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,7 +204,7 @@ mod tests {
             "P5
             120 32"
         )
-        .as_bytes();
+            .as_bytes();
 
         assert_eq!(
             match match_header_version(mock_header) {
